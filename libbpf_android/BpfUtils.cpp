@@ -23,6 +23,7 @@
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/in.h>
+#include <linux/pfkeyv2.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -37,13 +38,16 @@
 #include <log/log.h>
 #include <netdutils/MemBlock.h>
 #include <netdutils/Slice.h>
+#include <processgroup/processgroup.h>
 
 using android::base::GetUintProperty;
 using android::base::unique_fd;
 using android::netdutils::MemBlock;
 using android::netdutils::Slice;
 
-constexpr size_t LOG_BUF_SIZE = 65536;
+// The buffer size for the buffer that records program loading logs, needs to be large enough for
+// the largest kernel program.
+constexpr size_t LOG_BUF_SIZE = 0x20000;
 
 namespace android {
 namespace bpf {
@@ -212,6 +216,27 @@ uint64_t getSocketCookie(int sockFd) {
     return sock_cookie;
 }
 
+int synchronizeKernelRCU() {
+    // This is a temporary hack for network stats map swap on devices running
+    // 4.9 kernels. The kernel code of socket release on pf_key socket will
+    // explicitly call synchronize_rcu() which is exactly what we need.
+    int pfSocket = socket(AF_KEY, SOCK_RAW | SOCK_CLOEXEC, PF_KEY_V2);
+
+    if (pfSocket < 0) {
+        int ret = -errno;
+        ALOGE("create PF_KEY socket failed: %s", strerror(errno));
+        return ret;
+    }
+
+    // When closing socket, synchronize_rcu() gets called in sock_release().
+    if (close(pfSocket)) {
+        int ret = -errno;
+        ALOGE("failed to close the PF_KEY socket: %s", strerror(errno));
+        return ret;
+    }
+    return 0;
+}
+
 bool hasBpfSupport() {
     struct utsname buf;
     int kernel_version_major;
@@ -248,7 +273,13 @@ int loadAndPinProgram(BpfProgInfo* prog, Slice progBlock) {
         return ret;
     }
     if (prog->attachType == BPF_CGROUP_INET_EGRESS || prog->attachType == BPF_CGROUP_INET_INGRESS) {
-        unique_fd cg_fd(open(CGROUP_ROOT_PATH, O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+        std::string cg2_path;
+        if (!CgroupGetControllerPath(CGROUPV2_CONTROLLER_NAME, &cg2_path)) {
+            int ret = -errno;
+            ALOGE("Failed to find cgroup v2 root");
+            return ret;
+        }
+        unique_fd cg_fd(open(cg2_path.c_str(), O_DIRECTORY | O_RDONLY | O_CLOEXEC));
         if (cg_fd < 0) {
             int ret = -errno;
             ALOGE("Failed to open the cgroup directory");

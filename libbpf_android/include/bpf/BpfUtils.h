@@ -125,8 +125,6 @@ struct BpfMapInfo {
 #define DEFAULT_OVERFLOWUID 65534
 #endif
 
-constexpr const char* CGROUP_ROOT_PATH = "/dev/cg2_bpf";
-
 constexpr const int OVERFLOW_COUNTERSET = 2;
 
 constexpr const uint64_t NONEXISTENT_COOKIE = 0;
@@ -150,6 +148,7 @@ uint64_t getSocketCookie(int sockFd);
 bool hasBpfSupport();
 int parseProgramsFromFile(const char* path, BpfProgInfo* programs, size_t size,
                           const std::vector<BpfMapInfo>& mapPatterns);
+int synchronizeKernelRCU();
 
 #define SKIP_IF_BPF_NOT_SUPPORTED     \
     do {                              \
