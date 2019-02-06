@@ -38,6 +38,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
@@ -53,7 +54,6 @@ using android::base::unique_fd;
 using std::string;
 
 #define BPF_PROG_PATH "/system/etc/bpf/"
-#define BPF_PROG_SRC BPF_PROG_PATH "bpf_kern.o"
 
 #define CLEANANDEXIT(ret, mapPatterns)                    \
     do {                                                  \
@@ -87,39 +87,19 @@ void loadAllElfObjects(void) {
 }
 
 int main() {
+    std::string value = android::base::GetProperty("bpf.progs_loaded", "");
+    if (value == "1") {
+        ALOGI("Property bpf.progs_loaded is set, progs already loaded.\n");
+        return 0;
+    }
+
     // Load all ELF objects, create programs and maps, and pin them
     loadAllElfObjects();
 
-    const std::vector<BpfMapInfo> mapPatterns = {
-        BpfMapInfo(COOKIE_TAG_MAP, COOKIE_TAG_MAP_PATH),
-        BpfMapInfo(UID_COUNTERSET_MAP, UID_COUNTERSET_MAP_PATH),
-        BpfMapInfo(APP_UID_STATS_MAP, APP_UID_STATS_MAP_PATH),
-        BpfMapInfo(UID_STATS_MAP, UID_STATS_MAP_PATH),
-        BpfMapInfo(TAG_STATS_MAP, TAG_STATS_MAP_PATH),
-        BpfMapInfo(IFACE_STATS_MAP, IFACE_STATS_MAP_PATH),
-        BpfMapInfo(CONFIGURATION_MAP, CONFIGURATION_MAP_PATH),
-        BpfMapInfo(UID_OWNER_MAP, UID_OWNER_MAP_PATH),
-    };
-    for (size_t i = 0; i < mapPatterns.size(); i++) {
-        if (mapPatterns[i].fd < 0) {
-            ALOGE("Rerieve Map from %s failed: %d", mapPatterns[i].path.c_str(), mapPatterns[i].fd);
-            CLEANANDEXIT(-1, mapPatterns);
-        }
+    if (android::base::SetProperty("bpf.progs_loaded", "1") == false) {
+        ALOGE("Failed to set bpf.progs_loaded property\n");
+        return 1;
     }
-    BpfProgInfo programs[] = {
-        {BPF_CGROUP_INET_EGRESS, BPF_EGRESS_PROG_PATH, BPF_CGROUP_EGRESS_PROG_NAME,
-         BPF_PROG_TYPE_CGROUP_SKB, unique_fd(-1)},
-        {BPF_CGROUP_INET_INGRESS, BPF_INGRESS_PROG_PATH, BPF_CGROUP_INGRESS_PROG_NAME,
-         BPF_PROG_TYPE_CGROUP_SKB, unique_fd(-1)},
-        {MAX_BPF_ATTACH_TYPE, XT_BPF_INGRESS_PROG_PATH, XT_BPF_INGRESS_PROG_NAME,
-         BPF_PROG_TYPE_SOCKET_FILTER, unique_fd(-1)},
-        {MAX_BPF_ATTACH_TYPE, XT_BPF_EGRESS_PROG_PATH, XT_BPF_EGRESS_PROG_NAME,
-         BPF_PROG_TYPE_SOCKET_FILTER, unique_fd(-1)},
-        {MAX_BPF_ATTACH_TYPE, XT_BPF_WHITELIST_PROG_PATH, XT_BPF_WHITELIST_PROG_NAME,
-         BPF_PROG_TYPE_SOCKET_FILTER, unique_fd(-1)},
-        {MAX_BPF_ATTACH_TYPE, XT_BPF_BLACKLIST_PROG_PATH, XT_BPF_BLACKLIST_PROG_NAME,
-         BPF_PROG_TYPE_SOCKET_FILTER, unique_fd(-1)}};
-    int ret = android::bpf::parseProgramsFromFile(BPF_PROG_SRC, programs, ARRAY_SIZE(programs),
-                                                  mapPatterns);
-    CLEANANDEXIT(ret, mapPatterns);
+
+    return 0;
 }
