@@ -34,6 +34,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #include <android-base/strings.h>
 
@@ -45,6 +46,7 @@
 using android::base::StartsWith;
 using std::ifstream;
 using std::ios;
+using std::string;
 using std::vector;
 
 namespace android {
@@ -63,13 +65,15 @@ typedef struct {
  * is the name of the program, and tracepoint is the type.
  */
 sectionType sectionNameTypes[] = {
-    { "kprobe", BPF_PROG_TYPE_KPROBE },
-    { "tracepoint", BPF_PROG_TYPE_TRACEPOINT },
-    { "skfilter", BPF_PROG_TYPE_SOCKET_FILTER },
-    { "cgroupskb", BPF_PROG_TYPE_CGROUP_SKB },
+    {"kprobe", BPF_PROG_TYPE_KPROBE},
+    {"tracepoint", BPF_PROG_TYPE_TRACEPOINT},
+    {"skfilter", BPF_PROG_TYPE_SOCKET_FILTER},
+    {"cgroupskb", BPF_PROG_TYPE_CGROUP_SKB},
+    {"schedcls", BPF_PROG_TYPE_SCHED_CLS},
+    {"cgroupsock", BPF_PROG_TYPE_CGROUP_SOCK},
 
     /* End of table */
-    { "END", BPF_PROG_TYPE_UNSPEC },
+    {"END", BPF_PROG_TYPE_UNSPEC},
 };
 
 typedef struct {
@@ -496,7 +500,7 @@ static void applyMapRelo(ifstream& elfFile, vector<int> mapFds, vector<codeSecti
     }
 }
 
-static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, string license) {
+static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const string& license) {
     int ret, fd, kvers;
 
     if ((kvers = getMachineKvers()) < 0) return -1;
