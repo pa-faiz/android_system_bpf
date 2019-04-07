@@ -35,7 +35,6 @@ cc_binary {
         "libbpf_android",
         "libbase",
         "liblog",
-        "libnetdbpf",
         "libnetdutils",
         "libbpf",
     ],
@@ -46,6 +45,7 @@ cc_binary {
     init_rc: ["bpfloader.rc"],
 
     required: [
+        "clatd.o",
         "netd.o",
     ],
 
