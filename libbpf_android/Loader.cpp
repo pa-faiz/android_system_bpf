@@ -30,14 +30,18 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// This is BpfLoader v0.27
+// This is BpfLoader v0.28
 #define BPFLOADER_VERSION_MAJOR 0u
-#define BPFLOADER_VERSION_MINOR 27u
+#define BPFLOADER_VERSION_MINOR 28u
 #define BPFLOADER_VERSION ((BPFLOADER_VERSION_MAJOR << 16) | BPFLOADER_VERSION_MINOR)
 
 #include "bpf/BpfUtils.h"
 #include "bpf/bpf_map_def.h"
 #include "include/libbpf_android.h"
+
+#if BPFLOADER_VERSION < COMPILE_FOR_BPFLOADER_VERSION
+#error "BPFLOADER_VERSION is less than COMPILE_FOR_BPFLOADER_VERSION"
+#endif
 
 #include <bpf/bpf.h>
 
@@ -354,16 +358,18 @@ static int readSymTab(ifstream& elfFile, int sort, vector<Elf64_Sym>& data) {
     return 0;
 }
 
+static enum bpf_prog_type getFuseProgType() {
+    int result = BPF_PROG_TYPE_UNSPEC;
+    ifstream("/sys/fs/fuse/bpf_prog_type_fuse") >> result;
+    return static_cast<bpf_prog_type>(result);
+}
+
 static enum bpf_prog_type getSectionType(string& name) {
     for (auto& snt : sectionNameTypes)
         if (StartsWith(name, snt.name)) return snt.type;
 
     // TODO Remove this code when fuse-bpf is upstream and this BPF_PROG_TYPE_FUSE is fixed
-    if (StartsWith(name, "fuse/")) {
-        int result = BPF_PROG_TYPE_UNSPEC;
-        ifstream("/sys/fs/fuse/bpf_prog_type_fuse") >> result;
-        return static_cast<bpf_prog_type>(result);
-    }
+    if (StartsWith(name, "fuse/")) return getFuseProgType();
 
     return BPF_PROG_TYPE_UNSPEC;
 }
@@ -465,7 +471,10 @@ static bool IsAllowed(bpf_prog_type type, const bpf_prog_type* allowed, size_t n
     if (allowed == nullptr) return true;
 
     for (size_t i = 0; i < numAllowed; i++) {
-        if (type == allowed[i]) return true;
+        if (allowed[i] == BPF_PROG_TYPE_UNSPEC) {
+            if (type == getFuseProgType()) return true;
+        } else if (type == allowed[i])
+            return true;
     }
 
     return false;
@@ -737,6 +746,8 @@ static int createMaps(const char* elfPath, ifstream& elfFile, vector<unique_fd>&
     }
 
     for (int i = 0; i < (int)mapNames.size(); i++) {
+        if (md[i].zero != 0) abort();
+
         if (BPFLOADER_VERSION < md[i].bpfloader_min_ver) {
             ALOGI("skipping map %s which requires bpfloader min ver 0x%05x", mapNames[i].c_str(),
                   md[i].bpfloader_min_ver);
@@ -984,32 +995,34 @@ static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const 
     unsigned kvers = kernelVersion();
     int ret, fd;
 
-    if (!kvers) return -1;
+    if (!kvers) {
+        ALOGE("unable to get kernel version");
+        return -EINVAL;
+    }
 
     string objName = pathToObjName(string(elfPath));
 
     for (int i = 0; i < (int)cs.size(); i++) {
         string name = cs[i].name;
-        unsigned bpfMinVer = DEFAULT_BPFLOADER_MIN_VER;  // v0.0
-        unsigned bpfMaxVer = DEFAULT_BPFLOADER_MAX_VER;  // v1.0
-        domain selinux_context = domain::unspecified;
-        domain pin_subdir = domain::unspecified;
 
-        if (cs[i].prog_def.has_value()) {
-            unsigned min_kver = cs[i].prog_def->min_kver;
-            unsigned max_kver = cs[i].prog_def->max_kver;
-            ALOGD("cs[%d].name:%s min_kver:%x .max_kver:%x (kvers:%x)", i, name.c_str(), min_kver,
-                  max_kver, kvers);
-            if (kvers < min_kver) continue;
-            if (kvers >= max_kver) continue;
-
-            bpfMinVer = cs[i].prog_def->bpfloader_min_ver;
-            bpfMaxVer = cs[i].prog_def->bpfloader_max_ver;
-            selinux_context = getDomainFromSelinuxContext(cs[i].prog_def->selinux_context);
-            pin_subdir = getDomainFromPinSubdir(cs[i].prog_def->pin_subdir);
-            // Note: make sure to only check for unrecognized *after* verifying bpfloader
-            // version limits include this bpfloader's version.
+        if (!cs[i].prog_def.has_value()) {
+            ALOGE("[%d] '%s' missing program definition! bad bpf.o build?", i, name.c_str());
+            return -EINVAL;
         }
+
+        unsigned min_kver = cs[i].prog_def->min_kver;
+        unsigned max_kver = cs[i].prog_def->max_kver;
+        ALOGD("cs[%d].name:%s min_kver:%x .max_kver:%x (kvers:%x)", i, name.c_str(), min_kver,
+             max_kver, kvers);
+        if (kvers < min_kver) continue;
+        if (kvers >= max_kver) continue;
+
+        unsigned bpfMinVer = cs[i].prog_def->bpfloader_min_ver;
+        unsigned bpfMaxVer = cs[i].prog_def->bpfloader_max_ver;
+        domain selinux_context = getDomainFromSelinuxContext(cs[i].prog_def->selinux_context);
+        domain pin_subdir = getDomainFromPinSubdir(cs[i].prog_def->pin_subdir);
+        // Note: make sure to only check for unrecognized *after* verifying bpfloader
+        // version limits include this bpfloader's version.
 
         ALOGD("cs[%d].name:%s requires bpfloader version [0x%05x,0x%05x)", i, name.c_str(),
               bpfMinVer, bpfMaxVer);
@@ -1078,7 +1091,7 @@ static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const 
                 for (const auto& line : lines) ALOGW("%s", line.c_str());
                 ALOGW("bpf_prog_load - END log_buf contents.");
 
-                if (cs[i].prog_def.has_value() && cs[i].prog_def->optional) {
+                if (cs[i].prog_def->optional) {
                     ALOGW("failed program is marked optional - continuing...");
                     continue;
                 }
@@ -1119,14 +1132,12 @@ static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const 
                 ALOGE("chmod %s 0440 -> [%d:%s]", progPinLoc.c_str(), err, strerror(err));
                 return -err;
             }
-            if (cs[i].prog_def.has_value()) {
-                if (chown(progPinLoc.c_str(), (uid_t)cs[i].prog_def->uid,
-                          (gid_t)cs[i].prog_def->gid)) {
-                    int err = errno;
-                    ALOGE("chown %s %d %d -> [%d:%s]", progPinLoc.c_str(), cs[i].prog_def->uid,
-                          cs[i].prog_def->gid, err, strerror(err));
-                    return -err;
-                }
+            if (chown(progPinLoc.c_str(), (uid_t)cs[i].prog_def->uid,
+                      (gid_t)cs[i].prog_def->gid)) {
+                int err = errno;
+                ALOGE("chown %s %d %d -> [%d:%s]", progPinLoc.c_str(), cs[i].prog_def->uid,
+                      cs[i].prog_def->gid, err, strerror(err));
+                return -err;
             }
         }
 
