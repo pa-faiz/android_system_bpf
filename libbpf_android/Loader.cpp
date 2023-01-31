@@ -30,9 +30,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// This is BpfLoader v0.30
+// This is BpfLoader v0.31
 #define BPFLOADER_VERSION_MAJOR 0u
-#define BPFLOADER_VERSION_MINOR 30u
+#define BPFLOADER_VERSION_MINOR 31u
 #define BPFLOADER_VERSION ((BPFLOADER_VERSION_MAJOR << 16) | BPFLOADER_VERSION_MINOR)
 
 #include "bpf/BpfUtils.h"
@@ -1139,9 +1139,7 @@ static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const 
     return 0;
 }
 
-int loadProg(const char* elfPath, bool* isCritical, const char* prefix,
-             const unsigned long long allowedDomainBitmask, const bpf_prog_type* allowed,
-             size_t numAllowed) {
+int loadProg(const char* elfPath, bool* isCritical, const Location& location) {
     vector<char> license;
     vector<char> critical;
     vector<codeSection> cs;
@@ -1214,7 +1212,8 @@ int loadProg(const char* elfPath, bool* isCritical, const char* prefix,
         return -1;
     }
 
-    ret = readCodeSections(elfFile, cs, sizeOfBpfProgDef, allowed, numAllowed);
+    ret = readCodeSections(elfFile, cs, sizeOfBpfProgDef, location.allowedProgTypes,
+                           location.allowedProgTypesLength);
     if (ret) {
         ALOGE("Couldn't read all code sections in %s", elfPath);
         return ret;
@@ -1223,7 +1222,8 @@ int loadProg(const char* elfPath, bool* isCritical, const char* prefix,
     /* Just for future debugging */
     if (0) dumpAllCs(cs);
 
-    ret = createMaps(elfPath, elfFile, mapFds, prefix, allowedDomainBitmask, sizeOfBpfMapDef);
+    ret = createMaps(elfPath, elfFile, mapFds, location.prefix, location.allowedDomainBitmask,
+                     sizeOfBpfMapDef);
     if (ret) {
         ALOGE("Failed to create maps: (ret=%d) in %s", ret, elfPath);
         return ret;
@@ -1234,7 +1234,8 @@ int loadProg(const char* elfPath, bool* isCritical, const char* prefix,
 
     applyMapRelo(elfFile, mapFds, cs);
 
-    ret = loadCodeSections(elfPath, cs, string(license.data()), prefix, allowedDomainBitmask);
+    ret = loadCodeSections(elfPath, cs, string(license.data()), location.prefix,
+                           location.allowedDomainBitmask);
     if (ret) ALOGE("Failed to load programs, loadCodeSections ret=%d", ret);
 
     return ret;
