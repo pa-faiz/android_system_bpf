@@ -30,9 +30,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// This is BpfLoader v0.32
+// This is BpfLoader v0.34
+// WARNING: If you ever hit cherrypick conflicts here you're doing it wrong:
+// You are NOT allowed to cherrypick bpfloader related patches out of order.
+// (indeed: cherrypicking is probably a bad idea and you should merge instead)
+// Mainline supports ONLY the published versions of the bpfloader for each Android release.
 #define BPFLOADER_VERSION_MAJOR 0u
-#define BPFLOADER_VERSION_MINOR 32u
+#define BPFLOADER_VERSION_MINOR 34u
 #define BPFLOADER_VERSION ((BPFLOADER_VERSION_MAJOR << 16) | BPFLOADER_VERSION_MINOR)
 
 #include "BpfSyscallWrappers.h"
@@ -1038,6 +1042,7 @@ static int loadCodeSections(const char* elfPath, vector<codeSection>& cs, const 
             (cs[i].prog_def->ignore_on_userdebug && isUserdebug())) {
             ALOGD("cs[%d].name:%s is ignored on %s builds", i, name.c_str(),
                   getBuildType().c_str());
+            continue;
         }
 
         if (unrecognized(pin_subdir)) return -ENOTDIR;
