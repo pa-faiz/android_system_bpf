@@ -20,6 +20,8 @@
 #include <libbpf.h>
 #include <linux/bpf.h>
 
+#include <fstream>
+
 namespace android {
 namespace bpf {
 
@@ -78,13 +80,33 @@ static constexpr bool inDomainBitmask(domain d, unsigned long long v) {
     return domainToBitmask(d) & v;
 }
 
+struct Location {
+    const char* const dir = "";
+    const char* const prefix = "";
+    unsigned long long allowedDomainBitmask = 0;
+    const bpf_prog_type* allowedProgTypes = nullptr;
+    size_t allowedProgTypesLength = 0;
+};
+
 // BPF loader implementation. Loads an eBPF ELF object
-int loadProg(const char* elfPath, bool* isCritical, const char* prefix = "",
-             const unsigned long long allowedDomainBitmask = 0,
-             const bpf_prog_type* allowed = nullptr, size_t numAllowed = 0);
+int loadProg(const char* elfPath, bool* isCritical, const Location &location = {});
 
 // Exposed for testing
 unsigned int readSectionUint(const char* name, std::ifstream& elfFile, unsigned int defVal);
+
+// Returns the build type string (from ro.build.type).
+const std::string& getBuildType();
+
+// The following functions classify the 3 Android build types.
+inline bool isEng() {
+    return getBuildType() == "eng";
+}
+inline bool isUser() {
+    return getBuildType() == "user";
+}
+inline bool isUserdebug() {
+    return getBuildType() == "userdebug";
+}
 
 }  // namespace bpf
 }  // namespace android
